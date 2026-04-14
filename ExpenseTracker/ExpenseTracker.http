@@ -1,0 +1,6 @@
+@ExpenseTracker_HostAddress = http://localhost:5282
+
+POST {{ExpenseTracker_HostAddress}}/account/
+Accept: application/json
+
+###

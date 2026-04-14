@@ -1,6 +1,29 @@
 @ExpenseTracker_HostAddress = http://localhost:5282
 
-POST {{ExpenseTracker_HostAddress}}/account/
-Accept: application/json
-
-###
+### Step 1: Create a Cash account                                                                               
+POST {{ExpenseTracker_HostAddress}}/accounts/cash                                                                                     
+Accept: application/json                                                                                        
+                                                                                                                        
+### Step 2: Create a Salary income account (code 3001)                                                          
+POST {{ExpenseTracker_HostAddress}}/accounts/income?code=3001                                                                         
+Accept: application/json                                                                                        
+                                                                                                                        
+### Step 3: Record $3,000 income                                                                                
+# Replace the IDs below with the ones returned from steps 1 and 2                                               
+POST {{ExpenseTracker_HostAddress}}/transactions/income                                                                               
+Content-Type: application/json                                                                                  
+Accept: application/json                                                                                        
+                                                                                                                        
+{                                                                                                               
+  "cashAccountId": "2147265843203832290811919081037118728",                                                                        
+  "incomeAccountId": "2147265863667708996784359684331436816",                                                                    
+  "amountCents": 300000                                                                                         
+}                                                                                                               
+                                                                                                                        
+### Step 4: Check the cash account balance                                                                      
+GET {{ExpenseTracker_HostAddress}}/accounts/2147265843203832290811919081037118728                                                                      
+Accept: application/json                                                                                        
+                                                                                                                        
+### Step 5 (optional): Check the income account balance                                                         
+GET {{ExpenseTracker_HostAddress}}/accounts/2147265863667708996784359684331436816                                                                      
+Accept: application/json           

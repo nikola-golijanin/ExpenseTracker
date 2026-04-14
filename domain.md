@@ -69,6 +69,149 @@ This might seem like extra work, but it gives you something powerful: **the numb
 
 ---
 
+## Debits and Credits — How the Two Sides Work
+
+### First: forget your bank's language
+
+When your bank says "we debited your account" — money left. When they say "we credited your account" — money arrived. That's from *their* perspective — to the bank, you are a liability (they owe you your money back), so their terminology is flipped.
+
+Forget that. In double-entry bookkeeping, **debit and credit are just column names — Left and Right**. Neither means "good" or "bad". What they *do* to a balance depends entirely on the type of account.
+
+---
+
+### The T-account
+
+Every account is imagined as a T-shaped table with two columns:
+
+```
+         ACCOUNT NAME
+   Debit (Left) | Credit (Right)
+   -------------|---------------
+```
+
+Every money event writes one amount on the Left of one account and the same amount on the Right of another account. The two sides are always equal — that is the guarantee that nothing was invented or lost.
+
+---
+
+### Which side makes each account grow?
+
+| Account type | Left (Debit) | Right (Credit) |
+|---|---|---|
+| **Asset** | ↑ balance goes up | ↓ balance goes down |
+| **Liability** | ↓ balance goes down | ↑ balance goes up |
+| **Income** | ↓ balance goes down | ↑ balance goes up |
+| **Expense** | ↑ balance goes up | ↓ balance goes down |
+| **Equity** | ↓ balance goes down | ↑ balance goes up |
+
+Assets behave the opposite of everything else. Everything else behaves the same way as each other.
+
+Why? The accounting equation: **Assets = Liabilities + Equity**. Assets sit on the left of the equals sign, so they grow on the Left (debit) side. Liabilities and Equity sit on the right, so they grow on the Right (credit) side. Income grows Equity → also grows on the right. Expenses shrink Equity → grow on the left, opposite of Equity.
+
+---
+
+### Four concrete examples
+
+**1. You receive your €3,000 salary in cash**
+
+Two things happen at the same moment:
+- You have more cash → Cash (Asset) goes **up** → **DEBIT Cash**
+- You earned salary → Salary Income goes **up** → **CREDIT Salary Income**
+
+```
+      CASH (Asset)              SALARY INCOME (Income)
+  Debit  |  Credit           Debit  |  Credit
+---------|--------          --------|--------
+  3,000  |                          |  3,000
+```
+
+Debited: €3,000. Credited: €3,000. Always equal. ✓
+
+---
+
+**2. You spend €85 on groceries, paid in cash**
+
+- You spent on groceries → Groceries Expense goes **up** → **DEBIT Groceries**
+- You have less cash → Cash (Asset) goes **down** → **CREDIT Cash**
+
+```
+   GROCERIES (Expense)              CASH (Asset)
+  Debit  |  Credit           Debit  |  Credit
+---------|--------          --------|--------
+     85  |                          |    85
+```
+
+Cash after both examples:
+
+```
+      CASH (Asset)
+  Debit  |  Credit
+---------|--------
+  3,000  |    85
+balance = 3,000 − 85 = €2,915
+```
+
+---
+
+**3. You charge €45 dinner to your credit card**
+
+- You spent on restaurants → Restaurants Expense goes **up** → **DEBIT Restaurants**
+- You owe more → Credit Card (Liability) goes **up** → **CREDIT Credit Card**
+
+```
+  RESTAURANTS (Expense)        CREDIT CARD (Liability)
+  Debit  |  Credit           Debit  |  Credit
+---------|--------          --------|--------
+     45  |                          |    45
+```
+
+Your cash is **not touched at all**. The expense happened when you ate dinner, not when you pay the bill. This is one of the most important things the app gets right that simple trackers do not.
+
+---
+
+**4. You pay off the €45 credit card balance from cash**
+
+This is **not** a new expense — the expense was already recorded in example 3. This is purely settling a debt.
+
+- You owe less → Credit Card (Liability) goes **down** → **DEBIT Credit Card**
+- You have less cash → Cash (Asset) goes **down** → **CREDIT Cash**
+
+```
+  CREDIT CARD (Liability)          CASH (Asset)
+  Debit  |  Credit           Debit  |  Credit
+---------|--------          --------|--------
+     45  |                          |    45
+```
+
+No expense recorded. Balance sheet reshuffle only. ✓
+
+---
+
+### How the code sees this
+
+TigerBeetle does not know about "assets" or "income". It stores two running counters per account:
+
+- `debits_posted` — sum of every amount ever written on the Left for this account
+- `credits_posted` — sum of every amount ever written on the Right for this account
+
+`AccountsController` computes the human balance using the right formula per code range:
+
+```
+Assets and Expenses:          balance = debits_posted − credits_posted
+Liabilities, Income, Equity:  balance = credits_posted − debits_posted
+```
+
+After examples 1–4, the Cash account in TigerBeetle:
+
+```
+debits_posted  = 3,000        (salary receipt)
+credits_posted = 85 + 45      (groceries + credit card payment)
+balance        = 3,000 − 130  = €2,870
+```
+
+The `AccountCode` constants in `Ledger.cs` define the code ranges (1000–1999 = Assets, 2000–2999 = Liabilities, etc.). The balance switch in `GetAccount` uses those boundaries to pick the right formula automatically.
+
+---
+
 ## Account Types
 
 Every financial "slot" in this app is called an **account**. There are five types. Understanding these five types is the key to understanding everything else.

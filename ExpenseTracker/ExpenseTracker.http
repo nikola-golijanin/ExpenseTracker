@@ -21,7 +21,7 @@ Accept: application/json
 }                                                                                                               
                                                                                                                         
 ### Step 4: Check the cash account balance                                                                      
-GET {{ExpenseTracker_HostAddress}}/accounts/2147265843203832290811919081037118728                                                                      
+GET {{ExpenseTracker_HostAddress}}/accounts/2147346063220878249072311432636456950                                                                      
 Accept: application/json                                                                                        
                                                                                                                         
 ### Step 5 (optional): Check the income account balance                                                         

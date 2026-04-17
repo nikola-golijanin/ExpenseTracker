@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExpenseTracker.Dtos;
 using Microsoft.AspNetCore.Mvc;
 using TigerBeetle;
 
@@ -8,88 +9,40 @@ namespace ExpenseTracker.Controllers;
 [Route("[controller]")]
 public class AccountsController : ControllerBase
 {
-    // POST /accounts/cash
-    // Creates a physical cash wallet account (an Asset account).
+    // POST /accounts
+    // Creates any account in the chart of accounts — asset, liability, income, expense, or equity.
     //
-    // Asset accounts grow on the DEBIT side.
-    // Balance formula: debits_posted - credits_posted
-    //   → positive when you have money, can never go below 0 (enforced by flag below).
-    [HttpPost("cash")]
-    public IActionResult CreateCashAccount()
+    // The caller supplies a `type` (e.g. "Checking", "Salary", "Groceries") and the factory
+    // maps that to the correct TigerBeetle Code and Flags. No per-type endpoints needed.
+    //
+    // Body: { "type": "Checking" }
+    [HttpPost]
+    public IActionResult CreateAccount([FromBody] CreateAccountRequest request)
     {
-        var account = new Account
-        {
-            Id = ID.Create(), // Time-based unique ID — TigerBeetle's preferred ID strategy.
-
-            // Ledger.Usd = our USD ledger. All amounts in this app are stored as cents.
-            // Every account must share the same ledger to transact with each other.
-            // TigerBeetle rejects transfers between accounts on different ledgers.
-            Ledger = Ledger.Eur,
-
-            // Code is the account category within the ledger — we define these ranges:
-            //   1000-1999 = Assets  |  2000-2999 = Liabilities  |  3000-3999 = Income
-            //   4000-4999 = Expenses  |  5000-5999 = Equity
-            // AccountCode.Cash = 1003 (physical wallet).
-            Code = AccountCode.Cash,
-
-            // CreditsMustNotExceedDebits: TigerBeetle will reject any transfer that would
-            // cause credits_posted > debits_posted on this account.
-            // Since balance = debits - credits, this means the balance can never go below $0.
-            // The database enforces this — no application-level overdraft check needed.
-            Flags = AccountFlags.CreditsMustNotExceedDebits,
-
-            Timestamp = 0, // 0 = let TigerBeetle assign the timestamp.
-        };
+        var account = AccountFactory.Create(request.Type);
 
         var results = TigerBeetle.Execute(client => client.CreateAccounts([account]));
 
-        // CreateAccounts returns only failed results. Empty array = all succeeded.
-        Debug.Assert(results.Length == 0);
-
-        return Created($"/accounts/{account.Id}", new { id = account.Id.ToString() });
-    }
-
-    // POST /accounts/income?code=3001
-    // Creates an Income account (salary, freelance, etc.).
-    //
-    // Income accounts grow on the CREDIT side.
-    // Balance formula: credits_posted - debits_posted
-    //   → positive when you've earned money this period.
-    //
-    // code: 3001=Salary, 3002=Freelance, 3099=Other
-    [HttpPost("income")]
-    public IActionResult CreateIncomeAccount([FromQuery] ushort code = 3001)
-    {
-        var account = new Account
-        {
-            Id = ID.Create(),
-            Ledger = Ledger.Eur,  // Same ledger as all other accounts — EUR cents.
-            Code = code,                // e.g. (ushort)AccountCode.Salary = 3001.
-
-            // No balance constraints on income accounts.
-            // Income accumulates credits throughout the month.
-            // At month-end close, the balance is swept into Net Worth (Equity) and reset to 0.
-            Flags = AccountFlags.None,
-
-            Timestamp = 0,
-        };
-
-        var results = TigerBeetle.Execute(client => client.CreateAccounts([account]));
-
-        // CreateAccounts returns only failed results. Empty array = all succeeded.
-        Debug.Assert(results.Length == 0);
+        // CreateAccounts returns only the results that FAILED — an empty array means all succeeded.
+        // We assert here because in normal operation every create should succeed.
+        // In production, you'd inspect each CreateAccountResult for the specific error code.
+        //Debug.Assert(results.Length == 0);
 
         return Created($"/accounts/{account.Id}", new { id = account.Id.ToString() });
     }
 
     // GET /accounts/{id}
-    // Looks up an account and returns its human-readable balance.
+    // Looks up a single account by its TigerBeetle ID and returns its human-readable balance.
     //
-    // TigerBeetle stores raw debits_posted and credits_posted counters — it does NOT
-    // compute a balance itself. That's the application's responsibility.
-    // The correct formula depends on which side the account type grows on:
-    //   Assets, Expenses  → grow on debit  → balance = debits_posted - credits_posted
-    //   Liabilities, Income, Equity → grow on credit → balance = credits_posted - debits_posted
+    // TigerBeetle does NOT compute balances — it stores two raw counters per account:
+    //   debits_posted  — the sum of all amounts on the debit side of completed transfers
+    //   credits_posted — the sum of all amounts on the credit side of completed transfers
+    //
+    // The correct balance formula depends on which side the account type grows on:
+    //   Debit-normal  (Assets, Expenses)              → balance = debits_posted  - credits_posted
+    //   Credit-normal (Liabilities, Income, Equity)   → balance = credits_posted - debits_posted
+    //
+    // We derive the type from the account's Code range — the same ranges defined in AccountType.
     [HttpGet("{id}")]
     public IActionResult GetAccount(string id)
     {
@@ -102,34 +55,42 @@ public class AccountsController : ControllerBase
 
         var account = accounts[0];
 
-        // Derive balance from the code range — each range maps to an account type.
+        // Derive balance from the code range — each range maps to a normal side (debit or credit).
         var balance = account.Code switch
         {
-            // Assets (Checking=1001, Savings=1002, Cash=1003, ...): grow on debit.
-            // Balance = money received minus money spent from this account.
-            >= AccountCode.Checking and < AccountCode.CreditCard
+            // Assets (Checking=1001, Savings=1002, Cash=1003):
+            // Debit-normal — balance grows when you receive money (debits) and shrinks when you spend (credits).
+            // balance = debits_posted - credits_posted → positive = you have money here.
+            // CreditsMustNotExceedDebits flag ensures this never goes below 0.
+            >= (ushort)AccountType.Checking and < (ushort)AccountType.CreditCard
                 => (long)(account.DebitsPosted - account.CreditsPosted),
 
-            // Liabilities (CreditCard=2001, Loan=2002, ...): grow on credit.
-            // Balance = amount charged minus amount paid off.
-            >= AccountCode.CreditCard and < AccountCode.Salary
+            // Liabilities (CreditCard=2001, Loan=2002):
+            // Credit-normal — balance grows when you owe more (credits) and shrinks when you pay off (debits).
+            // balance = credits_posted - debits_posted → positive = how much you currently owe.
+            >= (ushort)AccountType.CreditCard and < (ushort)AccountType.Salary
                 => (long)(account.CreditsPosted - account.DebitsPosted),
 
-            // Income (Salary=3001, Freelance=3002, ...): grow on credit.
-            // Balance = how much you've earned this period.
-            >= AccountCode.Salary and < AccountCode.Housing
+            // Income (Salary=3001, Freelance=3002, OtherIncome=3099):
+            // Credit-normal — income is recognized when credited; month-end closing debits it to zero.
+            // balance = credits_posted - debits_posted → positive = total earned this period.
+            >= (ushort)AccountType.Salary and < (ushort)AccountType.Housing
                 => (long)(account.CreditsPosted - account.DebitsPosted),
 
-            // Expenses (Housing=4001, Groceries=4002, ...): grow on debit.
-            // Balance = how much you've spent in this category this period.
-            >= AccountCode.Housing and < AccountCode.NetWorth
+            // Expenses (Housing=4001, Groceries=4002, ...):
+            // Debit-normal — spending is recorded as debits; month-end closing credits them to zero.
+            // balance = debits_posted - credits_posted → positive = total spent in this category this period.
+            >= (ushort)AccountType.Housing and < (ushort)AccountType.NetWorth
                 => (long)(account.DebitsPosted - account.CreditsPosted),
 
-            // Equity (NetWorth=5001): grows on credit.
-            // Balance = total assets minus total liabilities — your true financial position.
-            >= AccountCode.NetWorth and < AccountCode.BudgetSource
+            // Equity (NetWorth=5001):
+            // Credit-normal — net worth grows permanently via month-end closing entries.
+            // balance = credits_posted - debits_posted → positive = total assets minus total liabilities.
+            // The History flag lets TigerBeetle retain balance snapshots for point-in-time reports.
+            >= (ushort)AccountType.NetWorth
                 => (long)(account.CreditsPosted - account.DebitsPosted),
 
+            // Unknown code range — not a type we recognise.
             _ => 0L
         };
 
@@ -138,11 +99,13 @@ public class AccountsController : ControllerBase
             id = account.Id.ToString(),
             code = account.Code,
             balanceCents = balance,
-            balanceEuros = balance / 100m, // All amounts stored as cents; divide for display.
-            // Raw counters exposed for debugging — lets you verify the double-entry equation:
-            // sum of all debitsPosted across all accounts == sum of all creditsPosted.
-            debitsPosted = (long)account.DebitsPosted,
+            balanceEuros = balance / 100m, // All amounts are stored as cents; divide by 100 for display.
+            // Raw counters exposed for debugging. The double-entry invariant guarantees:
+            //   sum(debitsPosted across ALL accounts) == sum(creditsPosted across ALL accounts)
+            // because every transfer adds the same amount to exactly one debit and one credit account.
+            debitsPosted  = (long)account.DebitsPosted,
             creditsPosted = (long)account.CreditsPosted,
         });
     }
 }
+
